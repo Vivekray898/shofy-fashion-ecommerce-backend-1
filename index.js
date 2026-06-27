@@ -3,6 +3,7 @@ const express = require("express");
 const app = express();
 const path = require('path');
 const cors = require("cors");
+const { clerkMiddleware } = require("@clerk/express"); // 1. Added Clerk Import
 const connectDB = require("./config/db");
 const { secret } = require("./config/secret");
 const PORT = secret.port || 7000;
@@ -25,6 +26,7 @@ const cloudinaryRoutes = require("./routes/cloudinary.routes");
 // middleware
 app.use(cors());
 app.use(express.json());
+app.use(clerkMiddleware()); // 2. Mounted Clerk globally before routes!
 app.use(morgan('dev'));
 app.use(express.static(path.join(__dirname, 'public')));
 

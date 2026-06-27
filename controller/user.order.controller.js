@@ -14,9 +14,22 @@ dayjs.extend(isYesterday);
 dayjs.extend(isSameOrBefore);
 dayjs.extend(isSameOrAfter);
 
-// get all orders user
-module.exports.getOrderByUser = async (req, res,next) => {
-  // console.log(req.user)
+// Helper function to safely query string or objectId values dynamically
+const getSafeUserMatch = (userId) => {
+  if (!userId) return null;
+  // If it's a Clerk alphanumeric user ID string, return it raw
+  if (userId.toString().startsWith("user_")) {
+    return userId.toString();
+  }
+  // If it's a legacy valid 24-character hex ID, allow native casting fallback
+  if (mongoose.Types.ObjectId.isValid(userId)) {
+    return new mongoose.Types.ObjectId(userId);
+  }
+  return userId.toString();
+};
+
+// 1. Get All Orders For Dynamic User Dashboard
+module.exports.getOrderByUser = async (req, res, next) => {
   try {
     const { page, limit } = req.query;
 
@@ -24,86 +37,85 @@ module.exports.getOrderByUser = async (req, res,next) => {
     const limits = Number(limit) || 8;
     const skip = (pages - 1) * limits;
 
-    const totalDoc = await Order.countDocuments({ user: req.user._id });
+    const currentUserId = req.user?._id;
+    if (!currentUserId) {
+      return res.status(401).json({ success: false, message: "User context unverified" });
+    }
 
-    // total padding order count
+    const safeUserMatch = getSafeUserMatch(currentUserId);
+
+    const totalDoc = await Order.countDocuments({ user: safeUserMatch });
+
+    // Aggregate Pending Metrics Safely
     const totalPendingOrder = await Order.aggregate([
       {
         $match: {
           status: "pending",
-          user: new mongoose.Types.ObjectId(req.user._id),
+          user: safeUserMatch,
         },
       },
       {
         $group: {
           _id: null,
           total: { $sum: "$totalAmount" },
-          count: {
-            $sum: 1,
-          },
+          count: { $sum: 1 },
         },
       },
     ]);
 
-    // total padding order count
+    // Aggregate Processing Metrics Safely
     const totalProcessingOrder = await Order.aggregate([
       {
         $match: {
           status: "processing",
-          user: new mongoose.Types.ObjectId(req.user._id),
+          user: safeUserMatch,
         },
       },
       {
         $group: {
           _id: null,
           total: { $sum: "$totalAmount" },
-          count: {
-            $sum: 1,
-          },
+          count: { $sum: 1 },
         },
       },
     ]);
 
+    // Aggregate Delivered Metrics Safely
     const totalDeliveredOrder = await Order.aggregate([
       {
         $match: {
           status: "delivered",
-          user: new mongoose.Types.ObjectId(req.user._id),
+          user: safeUserMatch,
         },
       },
       {
         $group: {
           _id: null,
           total: { $sum: "$totalAmount" },
-          count: {
-            $sum: 1,
-          },
+          count: { $sum: 1 },
         },
       },
     ]);
 
-    // today order amount
-
-    // query for orders
-    const orders = await Order.find({ user: req.user._id }).sort({ _id: -1 });
+    const orders = await Order.find({ user: safeUserMatch })
+      .sort({ _id: -1 })
+      .skip(skip)
+      .limit(limits);
 
     res.send({
       orders,
       pending: totalPendingOrder.length === 0 ? 0 : totalPendingOrder[0].count,
-      processing:
-        totalProcessingOrder.length === 0 ? 0 : totalProcessingOrder[0].count,
-      delivered:
-        totalDeliveredOrder.length === 0 ? 0 : totalDeliveredOrder[0].count,
-
+      processing: totalProcessingOrder.length === 0 ? 0 : totalProcessingOrder[0].count,
+      delivered: totalDeliveredOrder.length === 0 ? 0 : totalDeliveredOrder[0].count,
       totalDoc,
     });
   } catch (error) {
-    next(error)
+    next(error);
   }
 };
 
-// getOrderById
-module.exports.getOrderById = async (req, res,next) => {
+// 2. Get Single Order Details By ID
+module.exports.getOrderById = async (req, res, next) => {
   try {
     const order = await Order.findById(req.params.id);
     res.status(200).json({
@@ -111,12 +123,12 @@ module.exports.getOrderById = async (req, res,next) => {
       order,
     });
   } catch (error) {
-    next(error)
+    next(error);
   }
 };
 
-// getDashboardAmount
-exports.getDashboardAmount = async (req, res,next) => {
+// 3. Admin Panel - Financial Aggregates
+exports.getDashboardAmount = async (req, res, next) => {
   try {
     const todayStart = dayjs().startOf("day");
     const todayEnd = dayjs().endOf("day");
@@ -162,22 +174,11 @@ exports.getDashboardAmount = async (req, res,next) => {
     });
 
     const totalOrders = await Order.find();
-    const todayOrderAmount = todayOrders.reduce(
-      (total, order) => total + order.totalAmount,
-      0
-    );
-    const yesterdayOrderAmount = yesterdayOrders.reduce(
-      (total, order) => total + order.totalAmount,
-      0
-    );
-
-    const monthlyOrderAmount = monthlyOrders.reduce((total, order) => {
-      return total + order.totalAmount;
-    }, 0);
-    const totalOrderAmount = totalOrders.reduce(
-      (total, order) => total + order.totalAmount,
-      0
-    );
+    
+    const todayOrderAmount = todayOrders.reduce((total, order) => total + order.totalAmount, 0);
+    const yesterdayOrderAmount = yesterdayOrders.reduce((total, order) => total + order.totalAmount, 0);
+    const monthlyOrderAmount = monthlyOrders.reduce((total, order) => total + order.totalAmount, 0);
+    const totalOrderAmount = totalOrders.reduce((total, order) => total + order.totalAmount, 0);
 
     res.status(200).send({
       todayOrderAmount,
@@ -190,11 +191,12 @@ exports.getDashboardAmount = async (req, res,next) => {
       yesterDayCashPaymentAmount,
     });
   } catch (error) {
-    next(error)
+    next(error);
   }
 };
-// get sales report
-exports.getSalesReport = async (req, res,next) => {
+
+// 4. Admin Panel - Weekly Analytics Chart Data
+exports.getSalesReport = async (req, res, next) => {
   try {
     const startOfWeek = new Date();
     startOfWeek.setDate(startOfWeek.getDate() - 7);
@@ -206,56 +208,46 @@ exports.getSalesReport = async (req, res,next) => {
       },
     });
 
-    const salesReport = salesOrderChartData.reduce((res, value) => {
+    const salesReport = salesOrderChartData.reduce((resObj, value) => {
       const onlyDate = value.updatedAt.toISOString().split("T")[0];
 
-      if (!res[onlyDate]) {
-        res[onlyDate] = { date: onlyDate, total: 0, order: 0 };
+      if (!resObj[onlyDate]) {
+        resObj[onlyDate] = { date: onlyDate, total: 0, order: 0 };
       }
-      res[onlyDate].total += value.totalAmount;
-      res[onlyDate].order += 1;
-      return res;
+      resObj[onlyDate].total += value.totalAmount;
+      resObj[onlyDate].order += 1;
+      return resObj;
     }, {});
 
-    const salesReportData = Object.values(salesReport);
-
-    // Send the response to the client site
-    res.status(200).json({ salesReport: salesReportData });
+    res.status(200).json({ salesReport: Object.values(salesReport) });
   } catch (error) {
-    // Handle error if any
-    next(error)
+    next(error);
   }
 };
 
-// Most Selling Category
-exports.mostSellingCategory = async (req, res,next) => {
+// 5. Admin Panel - Category Volume Metrics
+exports.mostSellingCategory = async (req, res, next) => {
   try {
     const categoryData = await Order.aggregate([
-      {
-        $unwind: "$cart", // Deconstruct the cart array
-      },
+      { $unwind: "$cart" },
       {
         $group: {
           _id: "$cart.productType",
           count: { $sum: "$cart.orderQuantity" },
         },
       },
-      {
-        $sort: { count: -1 },
-      },
-      {
-        $limit: 5,
-      },
+      { $sort: { count: -1 } },
+      { $limit: 5 },
     ]);
 
     res.status(200).json({ categoryData });
   } catch (error) {
-    next(error)
+    next(error);
   }
 };
 
-// dashboard recent order
-exports.getDashboardRecentOrder = async (req, res,next) => {
+// 6. Admin Panel - Live Global Feed Stream
+exports.getDashboardRecentOrder = async (req, res, next) => {
   try {
     const { page, limit } = req.query;
 
@@ -272,6 +264,8 @@ exports.getDashboardRecentOrder = async (req, res,next) => {
     const orders = await Order.aggregate([
       { $match: queryObject },
       { $sort: { updatedAt: -1 } },
+      { $skip: skip },
+      { $limit: limits },
       {
         $project: {
           invoice: 1,
@@ -281,18 +275,18 @@ exports.getDashboardRecentOrder = async (req, res,next) => {
           name: 1,
           user: 1,
           totalAmount: 1,
-          status:1,
+          status: 1,
         },
       },
     ]);
 
     res.status(200).send({
       orders: orders,
-      page: page,
-      limit: limit,
+      page: pages,
+      limit: limits,
       totalOrder: totalDoc,
     });
   } catch (error) {
-    next(error)
+    next(error);
   }
 };

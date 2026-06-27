@@ -10,6 +10,7 @@
     "start": "node index.js",
     "build": "node index.js",
     "start-dev": "nodemon index.js",
+    "dev": "nodemon index.js",
     "data:import": "node seed.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -17,6 +18,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@clerk/clerk-sdk-node": "^5.1.6",
+    "@clerk/express": "^2.1.32",
     "bcryptjs": "^2.4.3",
     "cloudinary": "^1.37.0",
     "cors": "^2.8.5",

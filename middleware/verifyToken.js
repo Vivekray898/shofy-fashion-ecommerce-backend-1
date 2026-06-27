@@ -1,35 +1,30 @@
-const jwt = require("jsonwebtoken");
-const { promisify } = require("util");
-const { secret } = require("../config/secret");
-/**
- * 1. check if token exists
- * 2. if not token send res
- * 3. decode the token
- * 4. if valid next
- */
+const { getAuth } = require("@clerk/express");
 
-module.exports = async (req, res, next) => {
+module.exports = (req, res, next) => {
   try {
-    const token = req.headers?.authorization?.split(" ")?.[1];
+    // 1. Grab authentication state using Clerk's official Express extractor
+    const authState = getAuth(req);
 
-    if(!token){
+    // 2. Clear out early if no user session is active
+    if (!authState || !authState.userId) {
       return res.status(401).json({
         status: "fail",
-        error: "You are not logged in"
+        error: "You are not logged in or session has expired"
       });
     }
-    
-    const decoded = await promisify(jwt.verify)(token,secret.token_secret);
 
-    req.user = decoded;
+    // 3. Map values onto req.auth to keep authorization.js fully synced
+    req.auth = {
+      userId: authState.userId,
+      sessionClaims: authState.sessionClaims
+    };
 
     next();
-
-
   } catch (error) {
-    res.status(403).json({
-      status: "fail",
-      error: "Invalid token"
+    console.error("Clerk Token Resolution Crash:", error);
+    return res.status(500).json({
+      status: "error",
+      error: "Internal security processing exception occurred"
     });
   }
 };
